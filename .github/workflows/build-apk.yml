@@ -1,0 +1,73 @@
+name: Compilar APK Android
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "todacitan-proyecto.zip"
+      - "native/**"
+      - ".github/workflows/build-apk.yml"
+
+permissions:
+  contents: write
+
+defaults:
+  run:
+    working-directory: native
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Descomprimir proyecto (si se subió como ZIP)
+        working-directory: .
+        run: |
+          if [ -f todacitan-proyecto.zip ]; then unzip -oq todacitan-proyecto.zip; fi
+          ls native
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: native/package-lock.json
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Preparar proyecto Android
+        run: node scripts/build-android.mjs
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
+
+      - name: Aceptar licencias del SDK
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" > /dev/null || true
+
+      - name: Compilar APK
+        working-directory: native/android
+        run: ./gradlew --no-daemon assembleDebug
+
+      - name: Preparar archivo
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk Todacitan.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Todacitan-apk
+          path: native/Todacitan.apk
+
+      - name: Publicar en Releases (descarga directa desde el móvil)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "apk-${{ github.run_number }}" Todacitan.apk \
+            --title "Todacitan v1.${{ github.run_number }}" \
+            --notes "APK de seguimiento Todacitan. Descárgalo desde el móvil e instálalo."
